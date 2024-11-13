@@ -1,0 +1,10 @@
+version: '3'
+services:
+  dashboard:
+    image: nginx:latest
+    container_name: website
+    volumes:
+       - /Applications/MAMP/htdocs/workentry-dashboard:/usr/share/nginx/html
+    ports:
+       - "80:80"
+    restart: always
