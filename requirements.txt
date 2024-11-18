@@ -4,3 +4,5 @@ geopy==2.4.1
 haversine==2.8.1
 pymongo==4.10.1
 pytz==2022.6
+streamlit
+Werkzeug==2.2.2
