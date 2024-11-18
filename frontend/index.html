@@ -10,7 +10,7 @@
     <meta name="description" content="">
     <meta name="author" content="">
 
-    <title>SB Admin 2 - Dashboard</title>
+    <title>Workentry Dashboard</title>
 
     <!-- Custom fonts for this template-->
     <link href="vendor/fontawesome-free/css/all.min.css" rel="stylesheet" type="text/css">
@@ -34,9 +34,9 @@
             <!-- Sidebar - Brand -->
             <a class="sidebar-brand d-flex align-items-center justify-content-center" href="index.html">
                 <div class="sidebar-brand-icon rotate-n-15">
-                    <i class="fas fa-laugh-wink"></i>
+                    <img src="/frontend/gable.png" class="logo-class">
                 </div>
-                <div class="sidebar-brand-text mx-3">Work entry report</div>
+                <div class="sidebar-brand-text mx-3"></div>
             </a>
 
             <!-- Divider -->
@@ -127,7 +127,7 @@
                         <li class="nav-item dropdown no-arrow">
                             <a class="nav-link dropdown-toggle" href="#" id="userDropdown" role="button"
                                 data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
-                                <span class="mr-2 d-none d-lg-inline text-gray-600 small">Douglas McGee</span>
+                                <span class="mr-2 d-none d-lg-inline text-gray-600 small"></span>
                                 <img class="img-profile rounded-circle"
                                     src="img/undraw_profile.svg">
                             </a>
@@ -191,8 +191,10 @@
                                     <div class="row no-gutters align-items-center">
                                         <div class="col mr-2">
                                             <div class="text-xs font-weight-bold text-success text-uppercase mb-1">
-                                                Checked-in on time</div>
-                                            <div class="h5 mb-0 font-weight-bold text-gray-800">140 คน</div>
+                                                Checked-in on time
+                                            </div>
+                                            <!-- The element that will be updated -->
+                                            <div class="h5 mb-0 font-weight-bold text-gray-800" id="checkInSummary">Loading...</div>
                                         </div>
                                         <div class="col-auto">
                                             <i class="fas fa-clock fa-2x text-gray-300"></i>
@@ -202,23 +204,24 @@
                             </div>
                         </div>
 
-                        <!-- >Equal to Card Example -->
+
+
+                        <!-- Equal to Card Example -->
                         <div class="col-xl-3 col-md-6 mb-4">
                             <div class="card border-left-info shadow h-100 py-2">
                                 <div class="card-body">
                                     <div class="row no-gutters align-items-center">
                                         <div class="col mr-2">
-                                            <div class="text-xs font-weight-bold text-info text-uppercase mb-1">Equal to
-                                            </div>
+                                            <div class="text-xs font-weight-bold text-info text-uppercase mb-1">Equal to</div>
                                             <div class="row no-gutters align-items-center">
                                                 <div class="col-auto">
-                                                    <div class="h5 mb-0 mr-3 font-weight-bold text-gray-800">80%</div>
+                                                    <div class="h5 mb-0 mr-3 font-weight-bold text-gray-800" id="onTimePercentage">Loading...</div>
+
                                                 </div>
                                                 <div class="col">
                                                     <div class="progress progress-sm mr-2">
-                                                        <div class="progress-bar bg-info" role="progressbar"
-                                                            style="width: 80%" aria-valuenow="50" aria-valuemin="0"
-                                                            aria-valuemax="100"></div>
+                                                        <div class="progress-bar bg-info" id="progressBar" role="progressbar"
+                                                            style="width: 0%" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
                                                     </div>
                                                 </div>
                                             </div>
@@ -231,6 +234,7 @@
                             </div>
                         </div>
 
+
                         <!-- Active now Card Example -->
                         <div class="col-xl-3 col-md-6 mb-4">
                             <div class="card border-left-warning shadow h-100 py-2">
@@ -239,7 +243,9 @@
                                         <div class="col mr-2">
                                             <div class="text-xs font-weight-bold text-warning text-uppercase mb-1">
                                                 Active now</div>
-                                            <div class="h5 mb-0 font-weight-bold text-gray-800">18</div>
+                                            <!-- Added id to the element to update -->
+                                            <div class="h5 mb-0 font-weight-bold text-gray-800" id="totalCheckIn">Loading...</div>
+                                            
                                         </div>
                                         <div class="col-auto">
                                             <i class="fas fa-laptop fa-2x text-gray-300"></i>
@@ -248,6 +254,7 @@
                                 </div>
                             </div>
                         </div>
+
                     </div>
 
                     <!-- Content Row -->
@@ -456,6 +463,10 @@
 
     <!-- fetch data from BE -->
     <script src="js/employee-count.js"></script>
+    <script src="js/checkin-summary.js"></script>
+    <script src="js/checkin-percentage.js"></script>
+    
+
 
 
     

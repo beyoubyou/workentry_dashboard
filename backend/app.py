@@ -4,9 +4,10 @@ from pymongo import MongoClient
 from bson import ObjectId
 from haversine import haversine, Unit
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
 import pytz
 from geopy.distance import geodesic
+import re
 
 # import logging
 # # Configure logging for debugging
@@ -28,12 +29,16 @@ check_in_collection = db["check_in"]
 @app.route('/api/total_employees', methods=['GET'])
 def get_total_employees():
     try:
-        total_count = employee_collection.count_documents({})
+        # Use the distinct method to get unique emp_id values and count them
+        unique_emp_ids = employee_collection.distinct("emp_corp_id")
+        total_count = len(unique_emp_ids)
+
         return jsonify({"total": total_count})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+    
 
-# employee with site location name
+# table
 @app.route('/api/employees_with_site', methods=['GET'])
 def get_employees_with_site():
     try:
@@ -54,8 +59,9 @@ def get_employees_with_site():
             # Combine fname_en and lname_en into a single full name
             full_name_en = f"{employee.get('fname_en', '')} {employee.get('lname_en', '')}"
 
-            # Append employee data with mapped location name
+            # Append employee data with mapped location name and emp_corp_id
             result.append({
+                "emp_corp_id": employee.get("emp_corp_id", "N/A"),  # Added emp_corp_id
                 "full_name_th": full_name_th,
                 "full_name_en": full_name_en,
                 "email": employee.get("email", ""),
@@ -81,7 +87,7 @@ def get_check_in_records():
             timestamp = record.get("timestamp")
             if timestamp:
                 # Convert timestamp to a datetime object
-                timestamp = datetime.fromisoformat(timestamp[:-1])  # Remove the 'Z' if it's present
+                timestamp = datetime.fromisoformat(timestamp[:-1])
                 response_data.append({
                     "timestamp": timestamp.isoformat(),
                     "location_name": record.get("location_name", "Unknown")
@@ -95,8 +101,11 @@ def get_check_in_records():
 @app.route('/api/check_in_count_by_site', methods=['GET'])
 def check_in_count_by_site():
     corp_sites = list(corp_site_collection.find())
+    
+    # Initialize a dictionary to store check-in counts for each site, with location names as keys
     site_check_in_count = {site["location_name"]: 0 for site in corp_sites}
 
+    # Iterate over each check-in
     for check_in in check_in_collection.find():
         check_in_lat = check_in.get("current_lat")
         check_in_long = check_in.get("current_long")
@@ -112,10 +121,6 @@ def check_in_count_by_site():
             # Calculate distance using haversine
             distance = haversine((check_in_lat, check_in_long), (site_lat, site_long), unit=Unit.KILOMETERS)
             
-            # Log each distance check
-            # logging.debug(f"Check-in at ({check_in_lat}, {check_in_long}) to Site '{site['location_name']}' "
-                        #   f"at ({site_lat}, {site_long}): {distance:.2f} km")
-
             # Check if this site is the closest so far and within 1 km
             if distance < closest_distance and distance <= 1.0:
                 closest_site_name = site["location_name"]
@@ -124,12 +129,16 @@ def check_in_count_by_site():
         # If we found a close enough site, count this check-in for that site only
         if closest_site_name:
             site_check_in_count[closest_site_name] += 1
-            # logging.debug(f"Check-in at ({check_in_lat}, {check_in_long}) counted for '{closest_site_name}'")
 
-    # Convert the count dictionary to a list of dictionaries for JSON output
-    result = [{"location_name": name, "check_in_count": count} for name, count in site_check_in_count.items()]
+    # Extract initials from location names
+    result = []
+    for name, count in site_check_in_count.items():
+        # Extract initials within parentheses using regular expressions
+        match = re.search(r'\((.*?)\)', name)
+        initials = match.group(1) if match else name  # Use initials if found, else use the full name
+        result.append({"location_name": initials, "check_in_count": count})
+    
     return jsonify(result)
-
 
 
 # count check-ins by site and time
@@ -179,7 +188,6 @@ def check_in_count_by_site_time():
                     if check_in_hour not in time_ranges:
                         continue
                 except (ValueError, TypeError):
-                    # Skip invalid timestamps
                     continue
 
                 time_counts[check_in_hour] += 1
@@ -277,23 +285,18 @@ def check_in_count_by_site_time_v2():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# -> line chart
 @app.route('/api/check_in_count_by_site_time_v3', methods=['GET'])
 def check_in_count_by_site_time_v3():
     try:
         # Get date range from query parameters
-        # Corrected lines in your API
-        start_date_str = request.args.get('start_date')  # Match the query parameter name
-        end_date_str = request.args.get('end_date')      # Match the query parameter name
-
+        start_date_str = request.args.get('start_date')
+        end_date_str = request.args.get('end_date')
 
         # Convert date strings to datetime objects
         if start_date_str and end_date_str:
             start_date = datetime.strptime(start_date_str, '%Y-%m-%d')
             end_date = datetime.strptime(end_date_str, '%Y-%m-%d')
-
         else:
-            # Default to a wide range if no dates are provided
             start_date = datetime(2000, 1, 1)
             end_date = datetime(2100, 1, 1)
 
@@ -311,17 +314,27 @@ def check_in_count_by_site_time_v3():
         }
 
         # Initialize result structure for each site and each time label
-        result = {site["location_name"]: {label: 0 for label in time_labels} for site in corp_sites}
+        result = {}
+        unique_emp_ids = {}  # Dictionary to track unique emp_ids for each site and time
+
+        for site in corp_sites:
+            # Extract initials within parentheses using regular expressions
+            match = re.search(r'\((.*?)\)', site["location_name"])
+            initials = match.group(1) if match else site["location_name"]
+            result[initials] = {label: 0 for label in time_labels}
+            unique_emp_ids[initials] = {label: set() for label in time_labels}
 
         # Fetch check-in records within the date range
         check_ins = check_in_collection.find({
             "timestamp": {"$gte": start_date, "$lt": end_date}
-        }, {"timestamp": 1, "current_lat": 1, "current_long": 1})
+        }, {"timestamp": 1, "current_lat": 1, "current_long": 1, "emp_id": 1})
 
         for check_in in check_ins:
             # Convert timestamp to local time
             utc_time = check_in.get("timestamp")
-            if isinstance(utc_time, datetime):
+            emp_id = check_in.get("emp_id")
+
+            if isinstance(utc_time, datetime) and emp_id:
                 local_time = utc_time.replace(tzinfo=pytz.utc).astimezone(local_timezone)
                 local_hour = local_time.strftime("%H:00")
 
@@ -340,20 +353,24 @@ def check_in_count_by_site_time_v3():
                                 nearest_distance = distance
                                 nearest_site_id = site_id
 
-                    # Increment count for the nearest site and time label
+                    # Increment count for the nearest site and time label if emp_id is unique
                     if nearest_site_id:
                         site_name = corp_locations[nearest_site_id]["location_name"]
-                        result[site_name][local_hour] += 1
+                        match = re.search(r'\((.*?)\)', site_name)
+                        initials = match.group(1) if match else site_name
+
+                        # Only count the check-in if the emp_id is unique for this site and time
+                        if emp_id not in unique_emp_ids[initials][local_hour]:
+                            unique_emp_ids[initials][local_hour].add(emp_id)
+                            result[initials][local_hour] += 1
 
         return jsonify(result)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-
 # bar chart / pie chart
 @app.route('/api/check_in_summary_by_time', methods=['GET'])
 def check_in_summary_by_time():
-
     try:
         # Set up timezone conversion to UTC+7
         local_timezone = pytz.timezone("Asia/Bangkok")
@@ -370,9 +387,11 @@ def check_in_summary_by_time():
             site_lat = float(site["lat"])
             site_long = float(site["long"])
 
-            # Initialize count for each category
+            # Initialize count for each category and sets to track unique emp_ids
             check_in_before_10 = 0
             check_in_after_10 = 0
+            unique_emp_ids_before_10 = set()
+            unique_emp_ids_after_10 = set()
 
             # Fetch check-ins near the site
             check_ins = check_in_collection.find({
@@ -382,16 +401,22 @@ def check_in_summary_by_time():
 
             for check_in in check_ins:
                 timestamp = check_in.get("timestamp")
-                if isinstance(timestamp, datetime):
+                emp_id = check_in.get("emp_id")
+
+                if isinstance(timestamp, datetime) and emp_id:  # Ensure timestamp is a datetime object and emp_id exists
                     # Convert to local time
                     local_time = timestamp.astimezone(local_timezone)
                     check_in_hour = local_time.hour
 
-                    # Categorize based on check-in time
+                    # Categorize based on check-in time and ensure unique emp_id
                     if check_in_hour < cutoff_hour:
-                        check_in_before_10 += 1
+                        if emp_id not in unique_emp_ids_before_10:
+                            unique_emp_ids_before_10.add(emp_id)
+                            check_in_before_10 += 1
                     else:
-                        check_in_after_10 += 1
+                        if emp_id not in unique_emp_ids_after_10:
+                            unique_emp_ids_after_10.add(emp_id)
+                            check_in_after_10 += 1
 
             # Add results for the site
             result[site_name] = {
@@ -405,7 +430,7 @@ def check_in_summary_by_time():
 
 
 #for bar chart
-@app.route('/api/check_in_summary_by_time_v2', methods=['GET']) 
+@app.route('/api/check_in_summary_by_time_v2', methods=['GET'])
 def check_in_summary_by_time_v2():
     try:
         # Get date range from query parameters
@@ -417,17 +442,15 @@ def check_in_summary_by_time_v2():
             start_date = datetime.strptime(start_date_str, '%Y-%m-%d')
             end_date = datetime.strptime(end_date_str, '%Y-%m-%d')
         else:
-            # Default to a wide range if no dates are provided
             start_date = datetime(2000, 1, 1)
             end_date = datetime(2100, 1, 1)
 
         # Set up timezone conversion to UTC+7
         local_timezone = pytz.timezone("Asia/Bangkok")
 
-        # Define the 10 AM cutoff time in local time
         cutoff_hour = 10
 
-        # Fetch corp sites
+
         corp_sites = list(corp_site_collection.find())
         result = {}
 
@@ -436,9 +459,14 @@ def check_in_summary_by_time_v2():
             site_lat = float(site["lat"])
             site_long = float(site["long"])
 
-            # Initialize count for each category
+            match = re.search(r'\((.*?)\)', site_name)
+            initials = match.group(1) if match else site_name 
+
+
             check_in_before_10 = 0
             check_in_after_10 = 0
+            unique_emp_ids_before_10 = set()
+            unique_emp_ids_after_10 = set()
 
             # Fetch check-ins near the site within the date range
             check_ins = check_in_collection.find({
@@ -449,19 +477,24 @@ def check_in_summary_by_time_v2():
 
             for check_in in check_ins:
                 timestamp = check_in.get("timestamp")
-                if isinstance(timestamp, datetime):
+                emp_id = check_in.get("emp_id")
+
+                if isinstance(timestamp, datetime) and emp_id:
                     # Convert to local time
                     local_time = timestamp.astimezone(local_timezone)
                     check_in_hour = local_time.hour
 
-                    # Categorize based on check-in time
+                    # Categorize based on check-in time and ensure unique emp_id
                     if check_in_hour < cutoff_hour:
-                        check_in_before_10 += 1
+                        if emp_id not in unique_emp_ids_before_10:
+                            unique_emp_ids_before_10.add(emp_id)
+                            check_in_before_10 += 1
                     else:
-                        check_in_after_10 += 1
+                        if emp_id not in unique_emp_ids_after_10:
+                            unique_emp_ids_after_10.add(emp_id)
+                            check_in_after_10 += 1
 
-            # Add results for the site
-            result[site_name] = {
+            result[initials] = {
                 "on_time": check_in_before_10,
                 "late": check_in_after_10
             }
@@ -471,91 +504,179 @@ def check_in_summary_by_time_v2():
         return jsonify({"error": str(e)}), 500
 
 
-# on time count
-@app.route('/api/checkins/onTimeToday', methods=['GET'])
-def get_on_time_checkins_today():
+# on time count card 
+@app.route('/api/check_in_summary', methods=['GET'])
+def check_in_summary():
     try:
-        # Define the timezone (e.g., 'Asia/Bangkok')
+        # Set up timezone conversion to UTC+7 (Asia/Bangkok)
         local_timezone = pytz.timezone("Asia/Bangkok")
-        current_date = datetime.now(local_timezone).date()
 
-        # Define the start and end of the current day in local time
-        start_of_day = local_timezone.localize(datetime.combine(current_date, datetime.min.time()))
-        end_of_day = local_timezone.localize(datetime.combine(current_date, datetime.max.time()))
+        # Fetch all check-in records from the database
+        check_ins = check_in_collection.find()
 
-        # Query all check-ins within the current day
-        check_ins = check_in_collection.find({
-            "checkInTime": {"$gte": start_of_day, "$lte": end_of_day}
-        })
+        # Initialize a dictionary to store the summary
+        summary = {}
 
-        # Count the number of on-time check-ins after converting to local time
-        on_time_count = 0
+        # Define the cutoff time as 10:00 AM
+        cutoff_time = time(10, 0)
+
         for check_in in check_ins:
-            utc_time = check_in.get("checkInTime")
-            if isinstance(utc_time, datetime):
-                # Convert UTC time to local time
+            # Extract and convert the timestamp
+            utc_time = check_in.get("timestamp")
+            emp_id = check_in.get("emp_id")
+
+            if isinstance(utc_time, datetime) and emp_id:  # Ensure timestamp is a datetime object and emp_id exists
+                # Convert to Asia/Bangkok timezone
                 local_time = utc_time.replace(tzinfo=pytz.utc).astimezone(local_timezone)
-                local_hour = local_time.strftime("%H:00")
+                date_str = local_time.strftime('%Y-%m-%d')  # Format as 'YYYY-MM-DD'
 
-                # Logic to determine if the check-in is on time (customize this as needed)
-                if check_in.get("onTime", False):
-                    on_time_count += 1
+                # Check if the local time is before 10:00 AM
+                if local_time.time() < cutoff_time:
+                    # Initialize a set for unique emp_id tracking if not already present
+                    if date_str not in summary:
+                        summary[date_str] = set()
 
-        return jsonify({"count": on_time_count})
+                    # Add the emp_id to the set
+                    summary[date_str].add(emp_id)
+
+        # Find the latest date
+        if not summary:
+            return jsonify({"error": "No check-in records found"}), 404
+
+        latest_date = max(summary.keys())
+        latest_date_count = len(summary[latest_date])
+
+        # Return the summary for the latest date
+        return jsonify({latest_date: latest_date_count})
     except Exception as e:
-        return jsonify({"error": "Internal Server Error"}), 500
+        return jsonify({"error": str(e)}), 500
 
 
+
+# percent card
 @app.route('/api/check_in_percentage', methods=['GET'])
 def check_in_percentage():
     try:
-        # Get date range from query parameters
-        start_date_str = request.args.get('start_date')
-        end_date_str = request.args.get('end_date')
-
-        # Convert date strings to datetime objects
-        if start_date_str and end_date_str:
-            start_date = datetime.strptime(start_date_str, '%Y-%m-%d')
-            end_date = datetime.strptime(end_date_str, '%Y-%m-%d')
-        else:
-            # Default to a wide range if no dates are provided
-            start_date = datetime(2000, 1, 1)
-            end_date = datetime(2100, 1, 1)
-
-        # Set up timezone conversion to UTC+7
+        # Set up timezone conversion to UTC+7 (Asia/Bangkok)
         local_timezone = pytz.timezone("Asia/Bangkok")
 
-        # Define the 10 AM cutoff time in local time
+        # Define the cutoff hour
         cutoff_hour = 10
 
-        # Initialize counts
-        check_in_before_10 = 0
-        total_check_ins = 0
-
-        # Fetch check-ins within the date range
-        check_ins = check_in_collection.find({
-            "timestamp": {"$gte": start_date, "$lt": end_date}
-        })
+        # Fetch all check-in records from the database and initialize a dictionary to store check-ins by date
+        check_ins = check_in_collection.find()
+        check_ins_by_date = {}
 
         for check_in in check_ins:
             timestamp = check_in.get("timestamp")
-            if isinstance(timestamp, datetime):
+            emp_id = check_in.get("emp_id")
+
+            if isinstance(timestamp, datetime) and emp_id:
                 # Convert to local time
                 local_time = timestamp.astimezone(local_timezone)
-                check_in_hour = local_time.hour
+                date_str = local_time.strftime('%Y-%m-%d')  # Format as 'YYYY-MM-DD'
 
-                # Categorize based on check-in time
-                if check_in_hour < cutoff_hour:
-                    check_in_before_10 += 1
+                # Group check-ins by date
+                if date_str not in check_ins_by_date:
+                    check_ins_by_date[date_str] = []
+                check_ins_by_date[date_str].append((local_time, emp_id))
 
-                total_check_ins += 1
+        # Find the latest date
+        if not check_ins_by_date:
+            return jsonify({"error": "No check-in records found"}), 404
 
-        # Calculate percentage
+        latest_date = max(check_ins_by_date.keys())
+        latest_date_check_ins = check_ins_by_date[latest_date]
+
+        # Initialize counts and a set to track unique emp_ids for the latest date
+        check_in_before_10 = 0
+        total_check_ins = 0
+        unique_emp_ids = set()
+
+        # Process check-ins for the latest date
+        for local_time, emp_id in latest_date_check_ins:
+            if emp_id in unique_emp_ids:
+                continue  # Skip if emp_id has already been counted
+
+            # Add the emp_id to the set of unique emp_ids
+            unique_emp_ids.add(emp_id)
+
+            # Check if the hour is before the cutoff hour
+            if local_time.hour < cutoff_hour:
+                check_in_before_10 += 1
+
+            total_check_ins += 1
+
+        # Calculate the on-time percentage
         on_time_percentage = (check_in_before_10 / total_check_ins * 100) if total_check_ins > 0 else 0
 
-        return jsonify({"on_time_percentage": round(on_time_percentage, 2)})
+        # Return the on-time percentage for the latest date
+        return jsonify({
+            "total_checkin":total_check_ins,
+            "on_time_percentage": round(on_time_percentage, 2)
+        })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+#modal
+@app.route('/api/employee_checkins', methods=['GET'])
+def get_employee_checkins():
+    try:
+        # Fetch all employees
+        employees = employee_collection.find()
+        result = []
+
+        # Fetch site_id and map it with location name
+        local_timezone = pytz.timezone("Asia/Bangkok")
+
+        # Iterate over each employee to gather check-in records
+        for employee in employees:
+            emp_id = str(employee["_id"])  # Convert ObjectId to string
+            emp_corp_id = employee.get("emp_corp_id", "N/A")
+            full_name_th = f"{employee.get('fname_th', '')} {employee.get('lname_th', '')}"
+            full_name_en = f"{employee.get('fname_en', '')} {employee.get('lname_en', '')}"
+            email = employee.get("email", "N/A")
+            location_name = employee.get("location_name", "N/A")
+
+            site_id = employee.get("site_id")
+            site = corp_site_collection.find_one({"_id": ObjectId(site_id)}) if site_id else None
+            location_name = site["location_name"] if site else "Unknown"
+
+            check_in_records = check_in_collection.find({"emp_id": emp_id}).sort("timestamp", -1)
+
+            # Store the latest check-in for each day between 6:00 and 19:00
+            latest_checkins = {}
+            for check_in in check_in_records:
+                if isinstance(check_in.get("timestamp"), datetime):
+                    local_time = check_in["timestamp"].astimezone(local_timezone)
+                    hour = local_time.hour  # Get the hour of the check-in
+
+                    # Only keep check-ins between 6:00 and 19:00
+                    if 6 <= hour <= 19:
+                        date_str = local_time.strftime('%Y-%m-%d')  # Format as 'YYYY-MM-DD'
+
+                        # Only keep the latest check-in for each day
+                        if date_str not in latest_checkins:
+                            latest_checkins[date_str] = {
+                                "date": date_str,
+                                "time": local_time.strftime('%H:%M')
+                            }
+
+            # Append employee details with their latest check-in records
+            result.append({
+                "emp_corp_id": emp_corp_id,
+                "full_name_th": full_name_th,
+                "full_name_en": full_name_en,
+                "email": email,
+                "location_name": location_name,
+                "check_ins": list(latest_checkins.values())
+            })
+
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 
 
 
